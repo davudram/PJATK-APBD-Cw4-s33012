@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using LegacyRenewalApp.Interfaces;
 using LegacyRenewalApp.Repositories;
+using LegacyRenewalApp.Services;
+using LegacyRenewalApp.Strategies.DiscountRules;
+using LegacyRenewalApp.Strategies.PaymentFees;
 using LegacyRenewalApp.Wrappers;
 
 namespace LegacyRenewalApp
@@ -11,16 +14,31 @@ namespace LegacyRenewalApp
         private readonly ICustomerRepository _customerRepository;
         private readonly ISubscriptionPlanRepository _planRepository;
         private readonly IDiscountCalculator _discountCalculator;
-        private readonly IFeeCalculatorRepository _feeCalculatorRepository;
-        private readonly ITaxCalculatorRepositroy _taxCalculatorRepositroy;
+        private readonly FeeCalculatorService _feeCalculatorService;
+        private readonly TaxCalculatorService _taxCalculatorService;
         private readonly IBillingGateway _billingGateway;
 
         public SubscriptionRenewalService() : this(
             new CustomerRepository(), 
             new SubscriptionPlanRepository(),
-            new DiscountCalculatorRepository(new List<IDiscountRuleRepository> { new DiscountRuleRepository(), new TeamSizeDiscountRuleRepository() }),
-            new FeeCalculatorRepositoryRepository(),
-            new TaxCalculatorRepositroyRepositroy(),
+            new DiscountService(new List<IDiscountRule> 
+            { 
+                new EducationDiscountRule(), 
+                new PlatinumDiscountRule(),
+                new GoldDiscountRule(),
+                new SilverDiscountRule(),
+                new LargeTeamDiscountRule(),
+                new MediumTeamDiscountRule(),
+                new SmallTeamDiscountRule()
+            }),
+            new FeeCalculatorService(new List<IPaymentFeeStrategy>
+            {
+                new CardPaymentFeeStrategy(),
+                new PayPalPaymentFeeStrategy(),
+                new BankTransferPaymentFeeStrategy(),
+                new InvoicePaymentFeeStrategy()
+            }),
+            new TaxCalculatorService(),
             new BillingGatewayWrapper())
         {
         }
@@ -29,15 +47,15 @@ namespace LegacyRenewalApp
             ICustomerRepository customerRepository,
             ISubscriptionPlanRepository planRepository,
             IDiscountCalculator discountCalculator,
-            IFeeCalculatorRepository feeCalculatorRepository,
-            ITaxCalculatorRepositroy taxCalculatorRepositroy,
+            FeeCalculatorService feeCalculatorService,
+            TaxCalculatorService taxCalculatorService,
             IBillingGateway billingGateway)
         {
             _customerRepository = customerRepository;
             _planRepository = planRepository;
             _discountCalculator = discountCalculator;
-            _feeCalculatorRepository = feeCalculatorRepository;
-            _taxCalculatorRepositroy = taxCalculatorRepositroy;
+            _feeCalculatorService = feeCalculatorService;
+            _taxCalculatorService = taxCalculatorService;
             _billingGateway = billingGateway;
         }
 
@@ -62,8 +80,13 @@ namespace LegacyRenewalApp
 
             var discountContext = new DiscountContext 
             { 
-                Customer = customer, Plan = plan, SeatCount = seatCount, BaseAmount = baseAmount, UseLoyaltyPoints = useLoyaltyPoints 
+                Customer = customer, 
+                Plan = plan, 
+                SeatCount = seatCount, 
+                BaseAmount = baseAmount, 
+                UseLoyaltyPoints = useLoyaltyPoints 
             };
+            
             var discountResult = _discountCalculator.CalculateTotalDiscount(discountContext);
             string notes = discountResult.Note;
 
@@ -74,14 +97,14 @@ namespace LegacyRenewalApp
                 notes += "minimum discounted subtotal applied; ";
             }
 
-            decimal supportFee = _feeCalculatorRepository.CalculateSupportFee(normalizedPlanCode, includePremiumSupport);
+            decimal supportFee = _feeCalculatorService.CalculateSupportFee(normalizedPlanCode, includePremiumSupport);
             if (includePremiumSupport) notes += "premium support included; ";
 
-            decimal paymentFee = _feeCalculatorRepository.CalculatePaymentFee(normalizedPaymentMethod, subtotalAfterDiscount + supportFee);
+            decimal paymentFee = _feeCalculatorService.CalculatePaymentFee(normalizedPaymentMethod, subtotalAfterDiscount + supportFee);
             notes += GetPaymentMethodNote(normalizedPaymentMethod);
 
             decimal taxBase = subtotalAfterDiscount + supportFee + paymentFee;
-            decimal taxRate = _taxCalculatorRepositroy.GetTaxRate(customer.Country);
+            decimal taxRate = _taxCalculatorService.GetTaxRate(customer.Country);
             decimal taxAmount = taxBase * taxRate;
             
             decimal finalAmount = taxBase + taxAmount;
